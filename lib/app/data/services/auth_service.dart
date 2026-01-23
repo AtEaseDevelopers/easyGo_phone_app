@@ -1,0 +1,112 @@
+import '../models/api_response.dart';
+import '../models/user_model.dart';
+import '../providers/api_client.dart';
+import '../services/storage_service.dart';
+import '../../core/values/api_constants.dart';
+
+class AuthService {
+  final ApiClient _apiClient = ApiClient();
+
+  /// Login with flexible identifier (email, custom ID, phone) plus password and user type
+  /// The backend currently expects the field name 'email', so we always send it
+  /// even if it's actually an ID or phone string.
+  Future<LoginResponse> login({
+    required String email, // acts as generic identifier
+    required String password,
+    required String userType,
+    required String companyId,
+  }) async {
+    try {
+      final data = {
+        'email': email,
+        'password': password,
+        'user_type': userType,
+        'company_id': companyId,
+      };
+      
+      final response = await _apiClient.postFormData<LoginResponse>(
+        ApiConstants.login,
+        data: data,
+        fromJson: (data) => LoginResponse.fromJson(data),
+      );
+
+      if (response.isSuccess && response.data != null) {
+        final loginData = response.data!;
+
+        // Save token and user data to secure storage
+        await StorageService.saveToken(loginData.accessToken);
+        await StorageService.saveUserId(loginData.user.id);
+        await StorageService.saveUserType(loginData.user.userType);
+        await StorageService.saveUserName(loginData.user.name);
+        if (loginData.user.email != null) {
+          await StorageService.saveUserEmail(loginData.user.email!);
+        }
+
+        return loginData;
+      } else {
+        throw ApiException(
+          message: response.message.isEmpty ? 'Login failed' : response.message,
+        );
+      }
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Logout
+  Future<void> logout() async {
+    try {
+      // Save locale before clearing (to preserve language preference)
+      final savedLocale = await StorageService.getLocale();
+
+      // Call logout API with authorization token
+      try {
+        await _apiClient.post(ApiConstants.logout, data: {});
+      } catch (e) {
+        // Continue with local logout even if API call fails
+        // This ensures user can logout even with network issues
+      }
+
+      // Clear all stored data (including remember me and auth data)
+      await StorageService.clearAll();
+
+      // Restore locale if it was saved
+      if (savedLocale != null) {
+        final parts = savedLocale.split('_');
+        if (parts.length == 2) {
+          await StorageService.saveLocale(parts[0], parts[1]);
+        }
+      }
+
+      // Clear API client headers
+      _apiClient.clearHeaders();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Check if user is logged in
+  Future<bool> isLoggedIn() async {
+    return await StorageService.isLoggedIn();
+  }
+
+  /// Get current user type
+  Future<String?> getUserType() async {
+    return await StorageService.getUserType();
+  }
+
+  /// Get current user ID
+  Future<int?> getUserId() async {
+    return await StorageService.getUserId();
+  }
+
+  /// Get current user name
+  Future<String?> getUserName() async {
+    return await StorageService.getUserName();
+  }
+
+  /// Get current user email
+  Future<String?> getUserEmail() async {
+    return await StorageService.getUserEmail();
+  }
+}
